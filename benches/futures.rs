@@ -15,7 +15,7 @@ fn create(b: &mut Bencher) {
 
 #[bench]
 fn contention(b: &mut Bencher) {
-    b.iter(|| task::block_on(run(100, 1000)));
+    b.iter(|| task::block_on(run(10, 1000)));
 }
 
 #[bench]
