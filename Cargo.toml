@@ -1,9 +1,9 @@
 [package]
 name = "async-mutex"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Stjepan Glavina <stjepang@gmail.com>"]
 edition = "2018"
-description = "An async mutex"
+description = "Async mutex"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/stjepang/async-mutex"
 homepage = "https://github.com/stjepang/async-mutex"
