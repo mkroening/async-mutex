@@ -25,6 +25,8 @@
 //! # })
 //! ```
 
+#![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
+
 use std::cell::UnsafeCell;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
