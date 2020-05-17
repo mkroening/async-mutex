@@ -1,0 +1,19 @@
+[package]
+name = "async-mutex"
+version = "0.1.0"
+authors = ["Stjepan Glavina <stjepang@gmail.com>"]
+edition = "2018"
+description = "An async mutex"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/stjepang/async-mutex"
+homepage = "https://github.com/stjepang/async-mutex"
+documentation = "https://docs.rs/async-mutex"
+keywords = ["asynchronous", "mutex", "lock", "synchronization"]
+categories = ["asynchronous", "concurrency"]
+readme = "README.md"
+
+[dependencies]
+event-listener = "1.0.0"
+
+[dev-dependencies]
+smol = "0.1.6"
