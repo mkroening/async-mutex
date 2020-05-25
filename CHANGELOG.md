@@ -1,3 +1,7 @@
+# Version 1.1.1
+
+- More elaborate docs.
+
 # Version 1.1.0
 
 - Make locking fair.
