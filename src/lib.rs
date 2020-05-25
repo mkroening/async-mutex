@@ -1,5 +1,11 @@
 //! An async mutex.
 //!
+//! The locking mechanism uses eventual fairness to ensure locking will be fair on average without
+//! sacrificing performance. This is done by forcing a fair lock whenever a lock operation is
+//! starved for longer than 0.5 milliseconds.
+//!
+//! Each instance of [`Mutex`] requires 2 words of storage in addition to inner data.
+//!
 //! # Examples
 //!
 //! ```
@@ -30,14 +36,19 @@
 use std::cell::UnsafeCell;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use event_listener::Event;
 
 /// An async mutex.
 pub struct Mutex<T> {
-    /// Set to `true` when the mutex is locked.
-    locked: AtomicBool,
+    /// Current state of the mutex.
+    ///
+    /// The least significat bit is set to 1 if the mutex is locked.
+    /// The other bits hold the number of starved lock operations.
+    state: AtomicUsize,
 
     /// Lock operations waiting for the mutex to be released.
     lock_ops: Event,
@@ -61,7 +72,7 @@ impl<T> Mutex<T> {
     /// ```
     pub fn new(data: T) -> Mutex<T> {
         Mutex {
-            locked: AtomicBool::new(false),
+            state: AtomicUsize::new(0),
             lock_ops: Event::new(),
             data: UnsafeCell::new(data),
         }
@@ -75,28 +86,98 @@ impl<T> Mutex<T> {
     ///
     /// ```
     /// # smol::block_on(async {
-    /// #
     /// use async_mutex::Mutex;
     ///
     /// let mutex = Mutex::new(10);
     /// let guard = mutex.lock().await;
     /// assert_eq!(*guard, 10);
-    /// #
     /// # })
     /// ```
+    #[inline]
     pub async fn lock(&self) -> MutexGuard<'_, T> {
+        if let Some(guard) = self.try_lock() {
+            return guard;
+        }
+        self.lock_slow().await
+    }
+
+    /// Slow path for acquiring the mutex.
+    pub async fn lock_slow(&self) -> MutexGuard<'_, T> {
+        // Get the current time.
+        let start = Instant::now();
+
         loop {
-            // Try locking the mutex.
-            if let Some(guard) = self.try_lock() {
-                return guard;
+            // Start listening for events.
+            let listener = self.lock_ops.listen();
+
+            // Try locking if nobody is being starved.
+            match self.state.compare_and_swap(0, 1, Ordering::Acquire) {
+                // Lock acquired!
+                0 => return MutexGuard(self),
+
+                // Unlocked and somebody is starved - notify the first waiter in line.
+                s if s % 2 == 0 => self.lock_ops.notify_one(),
+
+                // The mutex is currently locked.
+                _ => {}
             }
 
-            // Start watching for notifications and try locking again.
-            let listener = self.lock_ops.listen();
-            if let Some(guard) = self.try_lock() {
-                return guard;
-            }
+            // Wait for a notification.
             listener.await;
+
+            // Try locking if nobody is being starved.
+            match self.state.compare_and_swap(0, 1, Ordering::Acquire) {
+                // Lock acquired!
+                0 => return MutexGuard(self),
+
+                // Unlocked and somebody is starved - notify the first waiter in line.
+                s if s % 2 == 0 => self.lock_ops.notify_one(),
+
+                // The mutex is currently locked.
+                _ => {}
+            }
+
+            // If waiting for too long, fall back to a fairer locking strategy that will prevent
+            // newer lock operations from starving us forever.
+            if start.elapsed() > Duration::from_micros(500) {
+                break;
+            }
+        }
+
+        // Increment the number of starved lock operations.
+        if self.state.fetch_add(2, Ordering::Release) > usize::MAX / 2 {
+            // In case of potential overflow, abort.
+            process::abort();
+        }
+
+        // Decrement the counter when exiting this function.
+        let _call = CallOnDrop(|| {
+            self.state.fetch_sub(2, Ordering::Release);
+        });
+
+        loop {
+            // Start listening for events.
+            let listener = self.lock_ops.listen();
+
+            // Try locking if nobody else is being starved.
+            match self.state.compare_and_swap(2, 2 | 1, Ordering::Acquire) {
+                // Lock acquired!
+                0 => return MutexGuard(self),
+
+                // Unlocked and somebody is starved - notify the first waiter in line.
+                s if s % 2 == 0 => self.lock_ops.notify_one(),
+
+                // The mutex is currently locked.
+                _ => {}
+            }
+
+            // Wait for a notification.
+            listener.await;
+
+            // Try acquiring the lock without waiting for others.
+            if self.state.fetch_or(1, Ordering::Acquire) % 2 == 0 {
+                return MutexGuard(self);
+            }
         }
     }
 
@@ -118,7 +199,7 @@ impl<T> Mutex<T> {
     /// ```
     #[inline]
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        if !self.locked.compare_and_swap(false, true, Ordering::Acquire) {
+        if self.state.compare_and_swap(0, 1, Ordering::Acquire) == 0 {
             Some(MutexGuard(self))
         } else {
             None
@@ -196,7 +277,8 @@ unsafe impl<T: Sync> Sync for MutexGuard<'_, T> {}
 
 impl<T> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
-        self.0.locked.store(false, Ordering::Release);
+        // Remove the last bit and notify a waiting lock operation.
+        self.0.state.fetch_sub(1, Ordering::Release);
         self.0.lock_ops.notify_one();
     }
 }
@@ -224,5 +306,13 @@ impl<T> Deref for MutexGuard<'_, T> {
 impl<T> DerefMut for MutexGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *self.0.data.get() }
+    }
+}
+
+struct CallOnDrop<F: Fn()>(F);
+
+impl<F: Fn()> Drop for CallOnDrop<F> {
+    fn drop(&mut self) {
+        (self.0)();
     }
 }

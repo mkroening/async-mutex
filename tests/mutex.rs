@@ -41,7 +41,7 @@ fn contention() {
 
         let tx = Arc::new(tx);
         let mutex = Arc::new(Mutex::new(0i32));
-        let num_tasks = 10000;
+        let num_tasks = 100;
 
         for _ in 0..num_tasks {
             let tx = tx.clone();
