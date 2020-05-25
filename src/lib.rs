@@ -329,6 +329,7 @@ impl<T> DerefMut for MutexGuard<'_, T> {
     }
 }
 
+/// Calls a function when dropped.
 struct CallOnDrop<F: Fn()>(F);
 
 impl<F: Fn()> Drop for CallOnDrop<F> {
