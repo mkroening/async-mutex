@@ -103,7 +103,7 @@ impl<T> Mutex<T> {
 
     /// Slow path for acquiring the mutex.
     #[cold]
-    pub async fn lock_slow(&self) -> MutexGuard<'_, T> {
+    async fn lock_slow(&self) -> MutexGuard<'_, T> {
         // Get the current time.
         let start = Instant::now();
 
