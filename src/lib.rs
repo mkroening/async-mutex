@@ -46,7 +46,7 @@ use event_listener::Event;
 pub struct Mutex<T> {
     /// Current state of the mutex.
     ///
-    /// The least significat bit is set to 1 if the mutex is locked.
+    /// The least significant bit is set to 1 if the mutex is locked.
     /// The other bits hold the number of starved lock operations.
     state: AtomicUsize,
 
