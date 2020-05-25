@@ -11,6 +11,12 @@ https://docs.rs/async-mutex)
 
 An async mutex.
 
+The locking mechanism uses eventual fairness to ensure locking will be fair on average without
+sacrificing performance. This is done by forcing a fair lock whenever a lock operation is
+starved for longer than 0.5 milliseconds.
+
+Each instance of `Mutex` requires 2 words of storage in addition to inner data.
+
 ## Examples
 
 ```rust

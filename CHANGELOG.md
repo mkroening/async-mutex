@@ -1,3 +1,8 @@
+# Version 1.1.0
+
+- Make locking fair.
+- Add `MutexGuard::source()`.
+
 # Version 1.0.1
 
 - Bump the `event-listener` version.
