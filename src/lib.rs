@@ -275,6 +275,25 @@ pub struct MutexGuard<'a, T>(&'a Mutex<T>);
 unsafe impl<T: Send> Send for MutexGuard<'_, T> {}
 unsafe impl<T: Sync> Sync for MutexGuard<'_, T> {}
 
+impl<'a, T> MutexGuard<'a, T> {
+    /// Returns a reference to the mutex a guard came from.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # smol::block_on(async {
+    /// use async_mutex::{Mutex, MutexGuard};
+    ///
+    /// let mutex = Mutex::new(10i32);
+    /// let guard = mutex.lock().await;
+    /// dbg!(MutexGuard::source(&guard));
+    /// # })
+    /// ```
+    pub fn source(guard: &MutexGuard<'a, T>) -> &'a Mutex<T> {
+        guard.0
+    }
+}
+
 impl<T> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
         // Remove the last bit and notify a waiting lock operation.
