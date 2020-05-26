@@ -1,3 +1,7 @@
+# Version 1.1.3
+
+- Fix a deadlock.
+
 # Version 1.1.2
 
 - Remove confusing wording in docs.
