@@ -1,3 +1,7 @@
+# Version 1.1.2
+
+- Remove confusing wording in docs.
+
 # Version 1.1.1
 
 - More elaborate docs.
