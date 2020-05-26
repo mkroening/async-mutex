@@ -114,11 +114,11 @@ impl<T> Mutex<T> {
                 // Lock acquired!
                 0 => return MutexGuard(self),
 
-                // Unlocked and somebody is starved - notify the first waiter in line.
-                s if s % 2 == 0 => self.lock_ops.notify_one(),
+                // Lock is held and nobody is starved.
+                1 => {}
 
-                // The mutex is currently locked.
-                _ => {}
+                // Somebody is starved.
+                _ => break,
             }
 
             // Wait for a notification.
@@ -129,11 +129,16 @@ impl<T> Mutex<T> {
                 // Lock acquired!
                 0 => return MutexGuard(self),
 
-                // Unlocked and somebody is starved - notify the first waiter in line.
-                s if s % 2 == 0 => self.lock_ops.notify_one(),
+                // Lock is held and nobody is starved.
+                1 => {}
 
-                // The mutex is currently locked.
-                _ => {}
+                // Somebody is starved.
+                _ => {
+                    // Notify the first listener in line because we probably received a
+                    // notification that was meant for a starved thread.
+                    self.lock_ops.notify_one();
+                    break;
+                }
             }
 
             // If waiting for too long, fall back to a fairer locking strategy that will prevent
@@ -161,13 +166,16 @@ impl<T> Mutex<T> {
             // Try locking if nobody else is being starved.
             match self.state.compare_and_swap(2, 2 | 1, Ordering::Acquire) {
                 // Lock acquired!
-                0 => return MutexGuard(self),
+                2 => return MutexGuard(self),
 
-                // Unlocked and somebody is starved - notify the first waiter in line.
-                s if s % 2 == 0 => self.lock_ops.notify_one(),
+                // Lock is held by someone.
+                s if s % 2 == 1 => {}
 
-                // The mutex is currently locked.
-                _ => {}
+                // Lock is available.
+                _ => {
+                    // Be fair: notify the first listener and then go wait in line.
+                    self.lock_ops.notify_one();
+                }
             }
 
             // Wait for a notification.
