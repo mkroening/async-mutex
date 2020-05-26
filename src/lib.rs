@@ -4,9 +4,6 @@
 //! sacrificing performance. This is done by forcing a fair lock whenever a lock operation is
 //! starved for longer than 0.5 milliseconds.
 //!
-//! Each instance of [`Mutex`] requires 2 words of storage in addition to inner data. Some
-//! additional metadata gets allocated on the heap on first case of contention.
-//!
 //! # Examples
 //!
 //! ```
