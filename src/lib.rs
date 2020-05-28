@@ -135,7 +135,7 @@ impl<T> Mutex<T> {
                 // Somebody is starved.
                 _ => {
                     // Notify the first listener in line because we probably received a
-                    // notification that was meant for a starved thread.
+                    // notification that was meant for a starved task.
                     self.lock_ops.notify_one();
                     break;
                 }
