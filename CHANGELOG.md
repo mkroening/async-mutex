@@ -1,3 +1,7 @@
+# Version 1.1.4
+
+- Update dependencies.
+
 # Version 1.1.3
 
 - Fix a deadlock.
