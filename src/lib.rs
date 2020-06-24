@@ -37,6 +37,7 @@ use std::ops::{Deref, DerefMut};
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+use std::usize;
 
 use event_listener::Event;
 
