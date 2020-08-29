@@ -7,25 +7,17 @@
 //! # Examples
 //!
 //! ```
-//! # smol::run(async {
+//! # futures_lite::future::block_on(async {
 //! use async_mutex::Mutex;
-//! use smol::Task;
-//! use std::sync::Arc;
 //!
-//! let m = Arc::new(Mutex::new(0));
-//! let mut tasks = vec![];
+//! let m = Mutex::new(1);
 //!
-//! for _ in 0..10 {
-//!     let m = m.clone();
-//!     tasks.push(Task::spawn(async move {
-//!         *m.lock().await += 1;
-//!     }));
-//! }
+//! let mut guard = m.lock().await;
+//! *guard = 2;
 //!
-//! for t in tasks {
-//!     t.await;
-//! }
-//! assert_eq!(*m.lock().await, 10);
+//! assert!(m.try_lock().is_none());
+//! drop(guard);
+//! assert_eq!(*m.try_lock().unwrap(), 2);
 //! # })
 //! ```
 
@@ -42,7 +34,7 @@ use std::usize;
 use event_listener::Event;
 
 /// An async mutex.
-pub struct Mutex<T> {
+pub struct Mutex<T: ?Sized> {
     /// Current state of the mutex.
     ///
     /// The least significant bit is set to 1 if the mutex is locked.
@@ -56,8 +48,8 @@ pub struct Mutex<T> {
     data: UnsafeCell<T>,
 }
 
-unsafe impl<T: Send> Send for Mutex<T> {}
-unsafe impl<T: Send> Sync for Mutex<T> {}
+unsafe impl<T: Send + ?Sized> Send for Mutex<T> {}
+unsafe impl<T: Send + ?Sized> Sync for Mutex<T> {}
 
 impl<T> Mutex<T> {
     /// Creates a new async mutex.
@@ -77,6 +69,22 @@ impl<T> Mutex<T> {
         }
     }
 
+    /// Consumes the mutex, returning the underlying data.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use async_mutex::Mutex;
+    ///
+    /// let mutex = Mutex::new(10);
+    /// assert_eq!(mutex.into_inner(), 10);
+    /// ```
+    pub fn into_inner(self) -> T {
+        self.data.into_inner()
+    }
+}
+
+impl<T: ?Sized> Mutex<T> {
     /// Acquires the mutex.
     ///
     /// Returns a guard that releases the mutex when dropped.
@@ -84,7 +92,7 @@ impl<T> Mutex<T> {
     /// # Examples
     ///
     /// ```
-    /// # smol::block_on(async {
+    /// # futures_lite::future::block_on(async {
     /// use async_mutex::Mutex;
     ///
     /// let mutex = Mutex::new(10);
@@ -214,20 +222,6 @@ impl<T> Mutex<T> {
         }
     }
 
-    /// Consumes the mutex, returning the underlying data.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use async_mutex::Mutex;
-    ///
-    /// let mutex = Mutex::new(10);
-    /// assert_eq!(mutex.into_inner(), 10);
-    /// ```
-    pub fn into_inner(self) -> T {
-        self.data.into_inner()
-    }
-
     /// Returns a mutable reference to the underlying data.
     ///
     /// Since this call borrows the mutex mutably, no actual locking takes place -- the mutable
@@ -236,7 +230,7 @@ impl<T> Mutex<T> {
     /// # Examples
     ///
     /// ```
-    /// # smol::block_on(async {
+    /// # futures_lite::future::block_on(async {
     /// use async_mutex::Mutex;
     ///
     /// let mut mutex = Mutex::new(0);
@@ -249,7 +243,7 @@ impl<T> Mutex<T> {
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for Mutex<T> {
+impl<T: fmt::Debug + ?Sized> fmt::Debug for Mutex<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         struct Locked;
         impl fmt::Debug for Locked {
@@ -271,25 +265,25 @@ impl<T> From<T> for Mutex<T> {
     }
 }
 
-impl<T: Default> Default for Mutex<T> {
+impl<T: Default + ?Sized> Default for Mutex<T> {
     fn default() -> Mutex<T> {
         Mutex::new(Default::default())
     }
 }
 
 /// A guard that releases the mutex when dropped.
-pub struct MutexGuard<'a, T>(&'a Mutex<T>);
+pub struct MutexGuard<'a, T: ?Sized>(&'a Mutex<T>);
 
-unsafe impl<T: Send> Send for MutexGuard<'_, T> {}
-unsafe impl<T: Sync> Sync for MutexGuard<'_, T> {}
+unsafe impl<T: Send + ?Sized> Send for MutexGuard<'_, T> {}
+unsafe impl<T: Sync + ?Sized> Sync for MutexGuard<'_, T> {}
 
-impl<'a, T> MutexGuard<'a, T> {
+impl<'a, T: ?Sized> MutexGuard<'a, T> {
     /// Returns a reference to the mutex a guard came from.
     ///
     /// # Examples
     ///
     /// ```
-    /// # smol::block_on(async {
+    /// # futures_lite::future::block_on(async {
     /// use async_mutex::{Mutex, MutexGuard};
     ///
     /// let mutex = Mutex::new(10i32);
@@ -302,7 +296,7 @@ impl<'a, T> MutexGuard<'a, T> {
     }
 }
 
-impl<T> Drop for MutexGuard<'_, T> {
+impl<T: ?Sized> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
         // Remove the last bit and notify a waiting lock operation.
         self.0.state.fetch_sub(1, Ordering::Release);
@@ -310,19 +304,19 @@ impl<T> Drop for MutexGuard<'_, T> {
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for MutexGuard<'_, T> {
+impl<T: fmt::Debug + ?Sized> fmt::Debug for MutexGuard<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
     }
 }
 
-impl<T: fmt::Display> fmt::Display for MutexGuard<'_, T> {
+impl<T: fmt::Display + ?Sized> fmt::Display for MutexGuard<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         (**self).fmt(f)
     }
 }
 
-impl<T> Deref for MutexGuard<'_, T> {
+impl<T: ?Sized> Deref for MutexGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -330,7 +324,7 @@ impl<T> Deref for MutexGuard<'_, T> {
     }
 }
 
-impl<T> DerefMut for MutexGuard<'_, T> {
+impl<T: ?Sized> DerefMut for MutexGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *self.0.data.get() }
     }
