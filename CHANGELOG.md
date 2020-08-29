@@ -1,3 +1,7 @@
+# Version 1.2.0
+
+- Allow `T: ?Sized`.
+
 # Version 1.1.5
 
 - Replace `usize::MAX` with `std::usize::MAX`.
