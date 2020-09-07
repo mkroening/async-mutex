@@ -1,3 +1,7 @@
+# Version 1.3.0
+
+- Add `Mutex::lock_arc()` and `Mutex::try_lock_arc()`.
+
 # Version 1.2.0
 
 - Allow `T: ?Sized`.
