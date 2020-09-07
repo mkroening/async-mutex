@@ -28,6 +28,7 @@ use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::usize;
 
@@ -105,12 +106,13 @@ impl<T: ?Sized> Mutex<T> {
         if let Some(guard) = self.try_lock() {
             return guard;
         }
-        self.lock_slow().await
+        self.acquire_slow().await;
+        MutexGuard(self)
     }
 
     /// Slow path for acquiring the mutex.
     #[cold]
-    async fn lock_slow(&self) -> MutexGuard<'_, T> {
+    async fn acquire_slow(&self) {
         // Get the current time.
         let start = Instant::now();
 
@@ -121,7 +123,7 @@ impl<T: ?Sized> Mutex<T> {
             // Try locking if nobody is being starved.
             match self.state.compare_and_swap(0, 1, Ordering::Acquire) {
                 // Lock acquired!
-                0 => return MutexGuard(self),
+                0 => return,
 
                 // Lock is held and nobody is starved.
                 1 => {}
@@ -136,7 +138,7 @@ impl<T: ?Sized> Mutex<T> {
             // Try locking if nobody is being starved.
             match self.state.compare_and_swap(0, 1, Ordering::Acquire) {
                 // Lock acquired!
-                0 => return MutexGuard(self),
+                0 => return,
 
                 // Lock is held and nobody is starved.
                 1 => {}
@@ -175,7 +177,7 @@ impl<T: ?Sized> Mutex<T> {
             // Try locking if nobody else is being starved.
             match self.state.compare_and_swap(2, 2 | 1, Ordering::Acquire) {
                 // Lock acquired!
-                2 => return MutexGuard(self),
+                2 => return,
 
                 // Lock is held by someone.
                 s if s % 2 == 1 => {}
@@ -192,7 +194,7 @@ impl<T: ?Sized> Mutex<T> {
 
             // Try acquiring the lock without waiting for others.
             if self.state.fetch_or(1, Ordering::Acquire) % 2 == 0 {
-                return MutexGuard(self);
+                return;
             }
         }
     }
@@ -240,6 +242,59 @@ impl<T: ?Sized> Mutex<T> {
     /// ```
     pub fn get_mut(&mut self) -> &mut T {
         unsafe { &mut *self.data.get() }
+    }
+}
+
+impl<T: ?Sized> Mutex<T> {
+    /// Acquires the mutex and clones a reference to it.
+    ///
+    /// Returns an owned guard that releases the mutex when dropped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// use async_mutex::Mutex;
+    /// use std::sync::Arc;
+    ///
+    /// let mutex = Arc::new(Mutex::new(10));
+    /// let guard = mutex.lock_arc().await;
+    /// assert_eq!(*guard, 10);
+    /// # })
+    /// ```
+    #[inline]
+    pub async fn lock_arc(self: &Arc<Self>) -> MutexGuardArc<T> {
+        if let Some(guard) = self.try_lock_arc() {
+            return guard;
+        }
+        self.acquire_slow().await;
+        MutexGuardArc(self.clone())
+    }
+
+    /// Attempts to acquire the mutex and clone a reference to it.
+    ///
+    /// If the mutex could not be acquired at this time, then [`None`] is returned. Otherwise, an
+    /// owned guard is returned that releases the mutex when dropped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use async_mutex::Mutex;
+    /// use std::sync::Arc;
+    ///
+    /// let mutex = Arc::new(Mutex::new(10));
+    /// if let Some(guard) = mutex.try_lock() {
+    ///     assert_eq!(*guard, 10);
+    /// }
+    /// # ;
+    /// ```
+    #[inline]
+    pub fn try_lock_arc(self: &Arc<Self>) -> Option<MutexGuardArc<T>> {
+        if self.state.compare_and_swap(0, 1, Ordering::Acquire) == 0 {
+            Some(MutexGuardArc(self.clone()))
+        } else {
+            None
+        }
     }
 }
 
@@ -325,6 +380,66 @@ impl<T: ?Sized> Deref for MutexGuard<'_, T> {
 }
 
 impl<T: ?Sized> DerefMut for MutexGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.0.data.get() }
+    }
+}
+
+/// An owned guard that releases the mutex when dropped.
+pub struct MutexGuardArc<T: ?Sized>(Arc<Mutex<T>>);
+
+unsafe impl<T: Send + ?Sized> Send for MutexGuardArc<T> {}
+unsafe impl<T: Sync + ?Sized> Sync for MutexGuardArc<T> {}
+
+impl<T: ?Sized> MutexGuardArc<T> {
+    /// Returns a reference to the mutex a guard came from.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// use async_mutex::{Mutex, MutexGuardArc};
+    /// use std::sync::Arc;
+    ///
+    /// let mutex = Arc::new(Mutex::new(10i32));
+    /// let guard = mutex.lock_arc().await;
+    /// dbg!(MutexGuardArc::source(&guard));
+    /// # })
+    /// ```
+    pub fn source(guard: &MutexGuardArc<T>) -> &Arc<Mutex<T>> {
+        &guard.0
+    }
+}
+
+impl<T: ?Sized> Drop for MutexGuardArc<T> {
+    fn drop(&mut self) {
+        // Remove the last bit and notify a waiting lock operation.
+        self.0.state.fetch_sub(1, Ordering::Release);
+        self.0.lock_ops.notify(1);
+    }
+}
+
+impl<T: fmt::Debug + ?Sized> fmt::Debug for MutexGuardArc<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl<T: fmt::Display + ?Sized> fmt::Display for MutexGuardArc<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+impl<T: ?Sized> Deref for MutexGuardArc<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe { &*self.0.data.get() }
+    }
+}
+
+impl<T: ?Sized> DerefMut for MutexGuardArc<T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *self.0.data.get() }
     }
